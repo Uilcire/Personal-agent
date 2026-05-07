@@ -80,6 +80,16 @@ uv run log-server
 
 Type your message and press Enter. Use `quit`, `exit`, or Ctrl+C to leave. Press Ctrl+C twice in rapid succession to force-exit (skips finally and aborts in-flight curator/digest threads).
 
+### Feishu Bot
+
+The same agent core is also exposed as a Feishu/Lark bot via a separate entry point:
+
+```bash
+uv run feishu-bot
+```
+
+See `src/agent/feishu/` (`server.py` + `client.py`) for the bridge. Requires Feishu app credentials in `.env`.
+
 ---
 
 ## Web Frontend (Cat Pet)
@@ -138,6 +148,7 @@ The agent reasons, calls tools, observes results, and repeats until the task is 
 | `make_dir` | Write | Create a directory (with parent dirs if needed) |
 | `delete_file` | Delete | Delete a file (requires confirmation or prior permission grant) |
 | `delete_dir` | Delete | Recursively delete a directory (requires confirmation or prior permission grant) |
+| `bash` | Exec | Run a shell command (tier-gated; destructive commands require confirmation) |
 | `check_permissions` | Utility | Query which paths have delete permission granted |
 | `web_search` | Utility | Web search for facts and verification |
 | `read_skill` | Utility | Load a skill's full instructions into context |
@@ -235,23 +246,35 @@ src/agent/
 │   └── settings.py       # Settings dataclass, .env loading, validation
 ├── core/
 │   ├── loop.py           # ReAct loop (consumes ConversationState transient suffix)
-│   ├── state.py          # Conversation state — message history + per-turn suffix
-│   └── compaction.py     # Context compaction
+│   └── state.py          # Conversation state — message history + per-turn suffix
+├── llm/
+│   └── client.py         # Provider-agnostic chat client (OpenAI / ByteDance / DeepSeek)
 ├── assistant_memory/
 │   ├── manager.py        # AssistantMemoryManager — public lifecycle entry points
 │   ├── store.py          # markdown + frontmatter IO, atomic writes, glob helpers
 │   ├── schema.py         # frontmatter parse/dump, dataclasses, get_memory_dir()
 │   ├── prompts.py        # Stage-1, Stage-2, main-response, curator prompt templates
 │   ├── retrieval.py      # Two-stage retrieval pipeline
-│   └── curator.py        # extract notes, classify layer, apply writes, summarize sessions
+│   ├── curator.py        # extract notes, classify layer, apply writes, summarize sessions
+│   ├── signal_detector.py# entity hints to bias file selection
+│   ├── page.py           # manifest pagination
+│   ├── templates.py      # scope/manifest skeletons
+│   └── tiers.py          # write-tier classification (silent vs confirm)
+├── feishu/               # Feishu/Lark bot bridge (entry point: `feishu-bot`)
 ├── permissions/
 │   └── gates.py          # Session-scoped delete permission tracking
 ├── skills/               # Skill discovery + manager (Claude Code-style)
-├── tools/                # Tool implementations (read/write/edit/delete + utilities)
+├── tools/                # Tool implementations (read/write/edit/delete/bash + utilities)
+├── memory/               # legacy: only models.py kept for the migration script
 ├── logger.py             # Socket-based logger (sends to log server)
 └── log_server.py         # TCP log server for live debug output
+
+server/                   # FastAPI + WebSocket bridge for the web cat pet
+web/                      # Vite + React + TS frontend (cat sprites in web/public/)
+cat/                      # PixelLab sprite source assets
 scripts/
 └── migrate_to_assistant_memory.py  # one-shot legacy JSON → markdown migration
+tests/                    # pytest suite
 ```
 
 ## Architecture
@@ -328,6 +351,16 @@ uv run agent -memlog   # 显示橙色 🧠 MEMORY 面板（检索/整理/摘要�
 ```
 
 输入消息后按 Enter 发送。使用 `quit`、`exit` 或 Ctrl+C 退出；连按两次 Ctrl+C 强制退出（跳过 finally，中止后台 curator/digest 线程）。
+
+### 飞书机器人
+
+同一个 agent 核心也通过独立入口暴露为飞书 Bot：
+
+```bash
+uv run feishu-bot
+```
+
+桥接层位于 `src/agent/feishu/`（`server.py` + `client.py`），需要在 `.env` 中配置飞书应用凭据。
 
 ## 浏览器前端（猫桌宠）
 
