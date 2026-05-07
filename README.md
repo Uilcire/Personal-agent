@@ -155,13 +155,15 @@ The agent maintains a **markdown-native** memory store at `~/assistant-memory/` 
 │   └── agent.md                # agent's soul; frontmatter holds immutable_core
 ├── people/<name>.md            # one file per person
 ├── preferences/<topic>.md      # food, coffee, reading, gifts, travel, …
-├── projects/<project>.md       # frontmatter has cwd, status, tags
+├── life/<aspect>.md            # long-term aspirations, ongoing projects, life-threads
+├── threads/<topic>.md          # open conversational threads / unresolved TODOs
+├── events/<slug>.md            # time-anchored events (past or upcoming)
 ├── context/current.md          # this week's state — always injected
 └── log/YYYY-MM/YYYY-MM-DD.md   # daily session digests; monthly summaries in _manifest
 ```
 
 **Per-turn retrieval (read side).** Before each model call:
-1. `_index.md` + recent turns + the user query feed a Stage-1 LLM (`deepseek-v4-flash`) that picks scopes (`people`, `preferences`, `projects`, `log`).
+1. `_index.md` + recent turns + the user query feed a Stage-1 LLM (`deepseek-v4-flash`) that picks scopes from `identity`, `people`, `preferences`, `life`, `threads`, `events`, `log`.
 2. Selected scope manifests feed a Stage-2 LLM that picks up to 5 specific files.
 3. Those files plus `context/current.md` are injected as a transient system suffix for that turn only — never polluting conversation history.
 
@@ -179,7 +181,7 @@ The agent maintains a **markdown-native** memory store at `~/assistant-memory/` 
 
 | Command | Description |
 |---------|-------------|
-| `/memory list <scope>` | List files in a scope (e.g. `people`, `projects`) |
+| `/memory list <scope>` | List files in a scope (e.g. `people`, `life`, `threads`, `events`) |
 | `/memory show <scope>/<file>` | Print a memory file with frontmatter |
 | `/memory rebuild <scope>` | Regenerate a scope manifest from scratch |
 | `/memory current` | Show `context/current.md` |
@@ -375,7 +377,9 @@ npm run dev
 │   └── agent.md                # agent 的灵魂；frontmatter 含 immutable_core
 ├── people/<name>.md            # 每个人物一个文件
 ├── preferences/<topic>.md      # 饮食、咖啡、阅读、礼物、旅行……
-├── projects/<project>.md       # frontmatter 含 cwd、status、tags
+├── life/<aspect>.md            # 长期目标、进行中的项目、人生主题
+├── threads/<topic>.md          # 开放话题 / 未解决的 TODO
+├── events/<slug>.md            # 时间锚定的事件（已过 / 未来）
 ├── context/current.md          # 本周状态 —— 永远注入
 └── log/YYYY-MM/YYYY-MM-DD.md   # 每日会话摘要
 ```
