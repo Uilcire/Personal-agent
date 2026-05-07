@@ -82,6 +82,44 @@ Type your message and press Enter. Use `quit`, `exit`, or Ctrl+C to leave. Press
 
 ---
 
+## Web Frontend (Cat Pet)
+
+In addition to the CLI, the same agent is exposed through a **browser-based desktop pet** — a draggable orange tabby pixel cat that opens a chat bubble on click.
+
+### Layout
+
+- **`server/`** — FastAPI + WebSocket bridge that wraps `agent.core.loop.run_streaming` and emits typed events (`state`, `token`, `tool_call`, `tool_result`, `curator_call`, `curator_result`, `done`, `error`).
+- **`web/`** — Vite + React + TypeScript frontend. Uses Zustand for state, framer-motion for drag, and pre-rendered Pixellab sprite frames for the cat (no Three.js / WebGL).
+- **`web/public/cat-sprites/`** — 5 animation states × 3 directions (south/east/west) × 6–12 frames per state. CC-BY assets generated via PixelLab API.
+
+### Run
+
+Two terminals:
+
+```bash
+# Backend — port 8000, scoped reload to avoid mid-conversation restarts
+uv run uvicorn server.main:app --reload --reload-dir server --port 8000
+```
+
+```bash
+# Frontend — Vite dev server on port 5173
+cd web
+npm install   # first time only
+npm run dev
+```
+
+Open <http://localhost:5173>. The right side shows an action panel logging every tool call and curator memory write in real time.
+
+### Streaming Marker-Gated Curator
+
+The web bridge intercepts the assistant token stream looking for `[memory note: ...]` markers:
+
+- The marker text is **stripped** before tokens are forwarded to the browser — the user never sees it.
+- The moment a marker closes (`]`), a curator thread fires immediately (mid-stream, not at end of turn) with the marker as a hint, writes to `~/assistant-memory/`, and emits a `curator_call` / `curator_result` event for the action panel.
+- The default end-of-turn `propose_writes` LLM call is suppressed in web mode (`AssistantMemoryManager.on_assistant_turn(..., run_curator=False)`); only marker-driven writes happen, so trivial turns cost zero curator tokens.
+
+---
+
 ## Features
 
 ### Streaming ReAct Loop
