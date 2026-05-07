@@ -327,6 +327,42 @@ uv run agent -memlog   # 显示橙色 🧠 MEMORY 面板（检索/整理/摘要�
 
 输入消息后按 Enter 发送。使用 `quit`、`exit` 或 Ctrl+C 退出；连按两次 Ctrl+C 强制退出（跳过 finally，中止后台 curator/digest 线程）。
 
+## 浏览器前端（猫桌宠）
+
+除 CLI 外，同一个 agent 也通过**浏览器桌宠**暴露——一只可拖动的橘色像素虎斑猫，点击弹出对话气泡。
+
+### 目录结构
+
+- **`server/`** — FastAPI + WebSocket 桥接层，包装 `agent.core.loop.run_streaming`，推送类型化事件（`state` / `token` / `tool_call` / `tool_result` / `curator_call` / `curator_result` / `done` / `error`）。
+- **`web/`** — Vite + React + TypeScript 前端。Zustand 管状态，framer-motion 实现拖拽，猫由预生成的 PixelLab sprite 帧序列驱动（不依赖 Three.js / WebGL）。
+- **`web/public/cat-sprites/`** — 5 个动画状态 × 3 方向（south / east / west）× 6–12 帧。CC-BY 授权，PixelLab API 生成。
+
+### 启动
+
+需要两个终端：
+
+```bash
+# 后端 — 端口 8000，reload 限定到 server/ 避免对话中途重启
+uv run uvicorn server.main:app --reload --reload-dir server --port 8000
+```
+
+```bash
+# 前端 — Vite dev 5173
+cd web
+npm install   # 首次需要
+npm run dev
+```
+
+打开 <http://localhost:5173>。右侧面板会实时显示每次工具调用和 curator 写入的记忆。
+
+### 流式 Marker 门控 Curator
+
+桥接层在 token 流上拦截 `[memory note: ...]` marker：
+
+- Marker 内容**在转发给浏览器前剥离**——用户看不到。
+- 闭合 `]` 出现的瞬间，立刻起线程跑 curator（**流中途**，不是 turn 结束时），把 marker 当 hint 写入 `~/assistant-memory/`，并通过 `curator_call` / `curator_result` 事件让右侧动作面板可视化。
+- Web 模式下 turn 结束时的默认 `propose_writes` LLM 调用被关掉了（`AssistantMemoryManager.on_assistant_turn(..., run_curator=False)`）；只有 marker 触发的写入会发生，琐碎对话不再产生 curator 开销。
+
 ## 助手记忆系统
 
 记忆库位于 `~/assistant-memory/`：
