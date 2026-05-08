@@ -1,295 +1,199 @@
-# CLI Agent
+# Personal Agent
 
-> **Language / 语言**: [English](#cli-agent-english) | [中文](#cli-agent-中文)
+> **Language / 语言**: [English](#english) · [中文](#中文)
 
----
+<a id="english"></a>
 
-<a id="cli-agent-english"></a>
+A from-scratch Python agent built on the ReAct loop. Three faces, one core:
 
-A CLI agent built from scratch in Python, implementing the ReAct (Reasoning + Acting) pattern. An interactive coding assistant that reads files, edits code, manages directories, and safely handles destructive operations — all from the terminal with streaming output. Includes a markdown-native **assistant memory** layer that mirrors `CLAUDE.md`-style notes, retrieves relevant context per turn via two-stage LLM selection, and evolves the agent's "soul" through inline `[memory note: ...]` markers.
+- **CLI** — terminal REPL with streaming Markdown, tool calls, and a delete-permission gate.
+- **Web** — a draggable orange tabby pixel cat (`web/`) that opens a chat bubble; FastAPI + WebSocket bridge in `server/`.
+- **Feishu/Lark bot** — long-connection bot in `src/agent/feishu/`; one ConversationState per user.
+
+The agent carries a **markdown-native memory** at `~/assistant-memory/`: per-turn two-stage retrieval picks the right files; a background curator extracts facts from the user message and `[memory note: ...]` markers in the assistant reply.
 
 ## Requirements
 
 - Python 3.11+
-- [uv](https://docs.astral.sh/uv/) (recommended)
-- An OpenAI API key, a ByteDance GPT API key (`GPT_AK`), **or** a DeepSeek API key (`DEEPSEEK_API_KEY`)
+- [uv](https://docs.astral.sh/uv/)
+- One of: `DEEPSEEK_API_KEY` · `GPT_AK` (ByteDance) · `OPENAI_API_KEY`
+- Node 18+ (only if you run the web frontend)
 
 ## Setup
-
-1. Clone the repo and install dependencies:
 
 ```bash
 uv sync
 ```
 
-2. Create a `.env` file in the project root. **Either** OpenAI **or** ByteDance GPT **or** DeepSeek:
+Create `.env`:
 
-**Option A — OpenAI:**
 ```
-OPENAI_API_KEY=your-api-key-here
-```
-
-**Option B — ByteDance GPT** (uses Azure-compatible API):
-```
-GPT_AK=your-bytedance-api-key
+DEEPSEEK_API_KEY=...        # or GPT_AK=...  or OPENAI_API_KEY=...
 ```
 
-**Option C — DeepSeek** (OpenAI-compatible API):
-```
-DEEPSEEK_API_KEY=your-deepseek-api-key
-```
+Auto-detect priority: **DeepSeek → ByteDance → OpenAI**. Force with `USE_DEEPSEEK=true` or `USE_BYTEDANCE=true`.
 
-Auto-detect priority when no `USE_*` flag is set: **DeepSeek → ByteDance → OpenAI**.
+### Optional env vars
 
-Optional env vars:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `USE_DEEPSEEK` | auto | `true` forces DeepSeek (requires `DEEPSEEK_API_KEY`) |
-| `USE_BYTEDANCE` | auto | `true` = ByteDance, `false` = fall through to DeepSeek/OpenAI |
-| `OPENAI_MODEL` | `gpt-4o-mini` | Model to use for OpenAI |
-| `DEEPSEEK_MODEL` | `deepseek-v4-pro` | Default DeepSeek model (legacy) |
-| `DEEPSEEK_MODEL_PRO` | `deepseek-v4-pro` | Large model: main responses + curator judgment |
-| `DEEPSEEK_MODEL_FLASH` | `deepseek-v4-flash` | Small/fast model: two-stage memory retrieval |
-| `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | DeepSeek API base URL |
+| Variable | Default | Notes |
+|---|---|---|
+| `OPENAI_MODEL` | `gpt-4o-mini` | OpenAI model |
+| `GPT_MODEL` | `gpt-5.2-2025-12-11` | ByteDance model |
+| `DEEPSEEK_MODEL_PRO` | `deepseek-v4-pro` | Main responses + curator |
+| `DEEPSEEK_MODEL_FLASH` | `deepseek-v4-flash` | Two-stage retrieval |
+| `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | DeepSeek endpoint |
 | `OPENAI_MAX_TOKENS` | `4096` | Max completion tokens |
-| `GPT_ENDPOINT` | `https://search.bytedance.net/gpt/openapi/online/v2/crawl` | ByteDance API base URL |
-| `GPT_MODEL` | `gpt-5.2-2025-12-11` | Overrides model when using ByteDance |
-| `ASSISTANT_MEMORY_DIR` | `~/assistant-memory` | Markdown memory store root |
-| `LOG_DEBUG` | `false` | `true` = stream model response tokens to logs |
-| `LOG_LEVEL` | `DEBUG` | Log level: DEBUG, INFO, WARNING, ERROR |
-| `LOG_SERVER_PORT` | `9999` | Port for log-server |
+| `ASSISTANT_MEMORY_DIR` | `~/assistant-memory` | Memory store root |
+| `LOG_LEVEL` / `LOG_DEBUG` | `DEBUG` / `false` | Logging |
+| `LOG_SERVER_PORT` | `9999` | Live debug log server port |
+| `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | — | Required for the Feishu bot |
 
-## Running
+## Run
 
-```bash
-uv run agent
-```
-
-Pass `-memlog` (or `--memlog`) to render memory subsystem events as orange `🧠 MEMORY` panels alongside tool calls — handy for understanding what the retrieval and curator layers are doing in real time:
+### CLI
 
 ```bash
-uv run agent -memlog
+uv run agent              # REPL
+uv run agent -memlog      # also stream retrieval/curator events as orange MEMORY panels
+uv run log-server         # (separate terminal) live debug logs
 ```
 
-For live debug logging, start the log server in a separate terminal before launching the agent:
+`quit` / `exit` / Ctrl+C to leave. Double Ctrl+C force-exits and kills any in-flight curator/digest threads.
+
+### Web (cat pet)
+
+Two terminals:
 
 ```bash
-uv run log-server
+# Backend
+uv run uvicorn server.main:app --reload --reload-dir server --port 8000
+
+# Frontend
+cd web && npm install && npm run dev
 ```
 
-Type your message and press Enter. Use `quit`, `exit`, or Ctrl+C to leave. Press Ctrl+C twice in rapid succession to force-exit (skips finally and aborts in-flight curator/digest threads).
+Open <http://localhost:5173>. The browser shows a draggable pixel cat plus a right-side action panel that streams every tool call and curator memory write in real time.
 
-### Feishu Bot
+In web mode the end-of-turn `propose_writes` LLM call is suppressed — only `[memory note: ...]` markers, intercepted mid-stream, fire the curator. Trivial turns cost zero curator tokens. The marker text is stripped before tokens reach the browser.
 
-The same agent core is also exposed as a Feishu/Lark bot via a separate entry point:
+### Feishu bot
 
 ```bash
 uv run feishu-bot
 ```
 
-See `src/agent/feishu/` (`server.py` + `client.py`) for the bridge. Requires Feishu app credentials in `.env`.
+Long-connection (WebSocket outbound) bot — no public IP or domain required. State is keyed per `open_id`.
 
----
+## Tools
 
-## Web Frontend (Cat Pet)
+Defined in `src/agent/tools/`, registered in `tools/registry.py`:
 
-In addition to the CLI, the same agent is exposed through a **browser-based desktop pet** — a draggable orange tabby pixel cat that opens a chat bubble on click.
+| Tool | Category |
+|---|---|
+| `read_file`, `list_dir` | Read |
+| `write_file`, `str_replace`, `file_rewrite`, `make_dir` | Write |
+| `delete_file`, `delete_dir` | Delete (gated) |
+| `bash` | Exec (tier-classified) |
+| `web_search` | Utility |
+| `beautify`, `read_skill`, `check_permissions`, `echo` | Utility |
 
-### Layout
+**Delete gate** (`permissions/gates.py`): on the first delete touching a path, an interactive panel offers *grant for session* / *delete once* / *cancel*. Grants cover all children. Non-TTY → cancel.
 
-- **`server/`** — FastAPI + WebSocket bridge that wraps `agent.core.loop.run_streaming` and emits typed events (`state`, `token`, `tool_call`, `tool_result`, `curator_call`, `curator_result`, `done`, `error`).
-- **`web/`** — Vite + React + TypeScript frontend. Uses Zustand for state, framer-motion for drag, and pre-rendered Pixellab sprite frames for the cat (no Three.js / WebGL).
-- **`web/public/cat-sprites/`** — 5 animation states × 3 directions (south/east/west) × 6–12 frames per state. CC-BY assets generated via PixelLab API.
+**Edit safety**: writes go to a temp file then atomic rename; Python/JSON files get a syntax check after edit; paths are confined to cwd.
 
-### Run
+## Assistant memory
 
-Two terminals:
-
-```bash
-# Backend — port 8000, scoped reload to avoid mid-conversation restarts
-uv run uvicorn server.main:app --reload --reload-dir server --port 8000
-```
-
-```bash
-# Frontend — Vite dev server on port 5173
-cd web
-npm install   # first time only
-npm run dev
-```
-
-Open <http://localhost:5173>. The right side shows an action panel logging every tool call and curator memory write in real time.
-
-### Streaming Marker-Gated Curator
-
-The web bridge intercepts the assistant token stream looking for `[memory note: ...]` markers:
-
-- The marker text is **stripped** before tokens are forwarded to the browser — the user never sees it.
-- The moment a marker closes (`]`), a curator thread fires immediately (mid-stream, not at end of turn) with the marker as a hint, writes to `~/assistant-memory/`, and emits a `curator_call` / `curator_result` event for the action panel.
-- The default end-of-turn `propose_writes` LLM call is suppressed in web mode (`AssistantMemoryManager.on_assistant_turn(..., run_curator=False)`); only marker-driven writes happen, so trivial turns cost zero curator tokens.
-
----
-
-## Features
-
-### Streaming ReAct Loop
-
-The agent reasons, calls tools, observes results, and repeats until the task is complete. All output streams in real time: text tokens, tool invocations, and tool results.
-
-### Tools
-
-| Tool | Category | Description |
-|------|----------|-------------|
-| `read_file` | Read | Read the full contents of a file |
-| `list_dir` | Read | List files and directories at a path |
-| `write_file` | Write | Create or fully overwrite a file |
-| `str_replace` | Write | Replace a unique string within a file (targeted edit) |
-| `file_rewrite` | Write | Overwrite an entire file with new content |
-| `make_dir` | Write | Create a directory (with parent dirs if needed) |
-| `delete_file` | Delete | Delete a file (requires confirmation or prior permission grant) |
-| `delete_dir` | Delete | Recursively delete a directory (requires confirmation or prior permission grant) |
-| `bash` | Exec | Run a shell command (tier-gated; destructive commands require confirmation) |
-| `check_permissions` | Utility | Query which paths have delete permission granted |
-| `web_search` | Utility | Web search for facts and verification |
-| `read_skill` | Utility | Load a skill's full instructions into context |
-
-### Assistant Memory
-
-The agent maintains a **markdown-native** memory store at `~/assistant-memory/` (override with `ASSISTANT_MEMORY_DIR`). The layout mirrors `CLAUDE.md`-style human-readable notes — no JSON shadow store, no embeddings.
+Layout under `~/assistant-memory/` (override with `ASSISTANT_MEMORY_DIR`):
 
 ```
-~/assistant-memory/
-├── _index.md                   # top-level manifest (always read at startup)
-├── identity/
-│   ├── _manifest.md
-│   ├── me.md                   # the user's identity
-│   └── agent.md                # agent's soul; frontmatter holds immutable_core
-├── people/<name>.md            # one file per person
-├── preferences/<topic>.md      # food, coffee, reading, gifts, travel, …
-├── life/<aspect>.md            # long-term aspirations, ongoing projects, life-threads
-├── threads/<topic>.md          # open conversational threads / unresolved TODOs
-├── events/<slug>.md            # time-anchored events (past or upcoming)
-├── context/current.md          # this week's state — always injected
-└── log/YYYY-MM/YYYY-MM-DD.md   # daily session digests; monthly summaries in _manifest
+_index.md                       # always-loaded top-level manifest
+identity/
+  agent.md                      # the agent's "soul"; frontmatter immutable_core is locked
+  me.md                         # user identity (user-maintained)
+people/<name>.md
+preferences/<topic>.md          # food, coffee, gifts, …
+life/<aspect>.md                # long-term aspirations, ongoing work
+threads/<topic>.md              # open conversational threads, unresolved TODOs
+events/<slug>.md                # time-anchored events
+context/current.md              # this week's state — always injected
+log/YYYY-MM/YYYY-MM-DD.md       # daily session digests
+<scope>/_manifest.md            # pipe-delimited hooks for retrieval
 ```
 
-**Per-turn retrieval (read side).** Before each model call:
-1. `_index.md` + recent turns + the user query feed a Stage-1 LLM (`deepseek-v4-flash`) that picks scopes from `identity`, `people`, `preferences`, `life`, `threads`, `events`, `log`.
-2. Selected scope manifests feed a Stage-2 LLM that picks up to 5 specific files.
-3. Those files plus `context/current.md` are injected as a transient system suffix for that turn only — never polluting conversation history.
+**Per-turn read** — `assistant_memory/retrieval.py`:
+1. `_index.md` + recent turns + user query → Stage 1 (`flash` model) picks scopes.
+2. Selected scope manifests → Stage 2 (`flash` model) picks ≤5 files.
+3. Selected files + `context/current.md` are injected as a transient system suffix for that turn only — never persisted into history.
 
-**Curator (write side).** After each assistant reply, a background daemon thread runs the curator (`deepseek-v4-pro`):
-- Scans the user message for declarative facts and the assistant reply for `[memory note: ...]` markers.
-- Layer 1 (silent): trivial extractions (e.g. "I'm allergic to peanuts" → append to `preferences/food.md`).
-- Layer 2 (confirm): ambiguous or contradicting facts. *(Confirm callback is currently a no-op — Layer 2 silently skipped pending UI work.)*
-- Updates the affected manifest line incrementally.
+`signal_detector.py` extracts entity hints (people/places) from the user message to bias Stage 2.
 
-**On exit.** A consolidation pass + per-day session digest run in a daemon thread. The agent prints `Dreaming...` and exits. The most recent per-turn curator is joined for up to 2s before consolidation runs so manifests aren't read stale.
+**Background write** — `assistant_memory/curator.py`:
+- After each assistant turn, a daemon thread runs the curator (`pro` model).
+- It scans the user message for declarative facts and the assistant reply for `[memory note: ...]` markers.
+- Writes are tier-classified (`tiers.py`): Layer 1 silent appends; Layer 2 confirm (UI not wired — silently skipped).
+- Manifest lines are updated incrementally.
 
-**Soul evolution.** The agent's mutable "soul" lives in the body of `identity/agent.md`. The immutable values (frontmatter `immutable_core`) are always appended to the system prompt — they never depend on retrieval. Soul updates flow through the curator's `[memory note: ...]` channel.
+**On exit** — consolidation pass + per-day session digest run in a daemon thread (the agent prints `Dreaming...`). The most recent per-turn curator is joined for up to 2s first so consolidation reads fresh manifests.
 
-**Slash commands** (type in the agent REPL):
+**Soul** — `identity/agent.md`. The frontmatter `immutable_core` is locked and always appended to the system prompt. The body is mutable but only via curator Layer 2 (gated by `[memory note: ...]`). Never edited with `str_replace`.
+
+### Slash commands
 
 | Command | Description |
-|---------|-------------|
-| `/memory list <scope>` | List files in a scope (e.g. `people`, `life`, `threads`, `events`) |
-| `/memory show <scope>/<file>` | Print a memory file with frontmatter |
-| `/memory rebuild <scope>` | Regenerate a scope manifest from scratch |
+|---|---|
+| `/memory list <scope>` | List files in a scope |
+| `/memory show <scope>/<file>` | Print a memory file |
+| `/memory rebuild <scope>` | Regenerate a scope manifest |
 | `/memory current` | Show `context/current.md` |
-| `/memory help` | Show all memory commands |
+| `/memory help` | List all memory commands |
 | `/skills` | List installed skills |
 | `/<skill-name>` | Load a skill's instructions into context |
 
-**Migration from the old JSON store.** If you have a legacy `agent-memory/` directory from a prior version, run:
+### Migrating from the old JSON store
 
 ```bash
 uv run python -m scripts.migrate_to_assistant_memory
 ```
 
-The script converts `personality.json` → `identity/agent.md`, projects + digests → markdown, and renames the old dir to `agent-memory.legacy/`.
+Converts `agent-memory/personality.json` → `identity/agent.md`, projects + digests → markdown, and renames the legacy dir to `agent-memory.legacy/`.
 
-### Permission System for Destructive Operations
-
-Delete operations (`delete_file`, `delete_dir`) are protected by a session-scoped permission gate:
-
-1. **First deletion attempt** on a path opens an interactive confirmation panel
-2. User chooses from three options:
-   - **Grant permission** — approve this path and all children for the rest of the session
-   - **Delete once** — approve this single deletion only
-   - **Cancel** — abort the operation
-3. Granted permissions persist in memory for the session; parent-path grants cover all children
-
-### Safety Features
-
-- **Path validation**: Edit operations are confined to the current working directory.
-- **Atomic writes**: File writes go to a temp file then atomically renamed.
-- **Syntax checking**: After editing Python or JSON files, the agent validates syntax.
-- **Non-TTY safe**: Delete confirmation defaults to "cancel" when stdin is not a terminal.
-
-### Rich Terminal UI
-
-- Startup banner with project name and version
-- Color-coded output: user prompts in green, tool calls with `⟳ tool_name(args)`, MEMORY panels in orange (with `-memlog`), errors in red
-- Streaming markdown rendering for assistant replies; `[memory note: ...]` markers stripped inline before they reach the screen
-- Live log server for debug output without polluting the agent REPL
-
----
-
-## Project Structure
+## Project layout
 
 ```
 src/agent/
-├── cli/
-│   ├── app.py            # REPL loop, project resolution, retrieval injection
-│   └── display.py        # Rich UI: banner, prompts, streaming, MEMORY panels
-├── config/
-│   └── settings.py       # Settings dataclass, .env loading, validation
-├── core/
-│   ├── loop.py           # ReAct loop (consumes ConversationState transient suffix)
-│   └── state.py          # Conversation state — message history + per-turn suffix
-├── llm/
-│   └── client.py         # Provider-agnostic chat client (OpenAI / ByteDance / DeepSeek)
+├── cli/            app.py · display.py            REPL + Rich UI
+├── core/           loop.py · state.py             ReAct loop, ConversationState (transient suffix)
+├── llm/            client.py                      provider-agnostic chat client
+├── config/         settings.py                    .env loading, backend selection
 ├── assistant_memory/
-│   ├── manager.py        # AssistantMemoryManager — public lifecycle entry points
-│   ├── store.py          # markdown + frontmatter IO, atomic writes, glob helpers
-│   ├── schema.py         # frontmatter parse/dump, dataclasses, get_memory_dir()
-│   ├── prompts.py        # Stage-1, Stage-2, main-response, curator prompt templates
-│   ├── retrieval.py      # Two-stage retrieval pipeline
-│   ├── curator.py        # extract notes, classify layer, apply writes, summarize sessions
-│   ├── signal_detector.py# entity hints to bias file selection
-│   ├── page.py           # manifest pagination
-│   ├── templates.py      # scope/manifest skeletons
-│   └── tiers.py          # write-tier classification (silent vs confirm)
-├── feishu/               # Feishu/Lark bot bridge (entry point: `feishu-bot`)
-├── permissions/
-│   └── gates.py          # Session-scoped delete permission tracking
-├── skills/               # Skill discovery + manager (Claude Code-style)
-├── tools/                # Tool implementations (read/write/edit/delete/bash + utilities)
-├── memory/               # legacy: only models.py kept for the migration script
-├── logger.py             # Socket-based logger (sends to log server)
-└── log_server.py         # TCP log server for live debug output
-
-server/                   # FastAPI + WebSocket bridge for the web cat pet
-web/                      # Vite + React + TS frontend (cat sprites in web/public/)
-cat/                      # PixelLab sprite source assets
-scripts/
-└── migrate_to_assistant_memory.py  # one-shot legacy JSON → markdown migration
-tests/                    # pytest suite
+│   ├── manager.py        public lifecycle (on_startup/turn/exit, retrieve_for_query, handle_command)
+│   ├── retrieval.py      two-stage retrieval pipeline
+│   ├── curator.py        extract facts, classify, apply writes, summarize sessions
+│   ├── store.py          markdown + frontmatter IO, atomic writes
+│   ├── schema.py         dataclasses, get_memory_dir()
+│   ├── prompts.py        Stage 1/2/main/curator templates
+│   ├── signal_detector.py  entity hints for Stage 2
+│   ├── tiers.py          write-tier classification
+│   ├── page.py           manifest pagination
+│   └── templates.py      scope/manifest skeletons
+├── tools/          read/write/edit/delete + bash, web_search, beautify, read_skill, registry
+├── permissions/    gates.py                       session-scoped delete grants
+├── skills/         discovery.py · loader.py · manager.py · models.py
+├── feishu/         server.py · client.py          long-connection Feishu bot
+├── memory/         models.py                      legacy — kept for the migration script
+├── logger.py · log_server.py                       socket logger + TCP debug server
+server/             main.py + bridge               FastAPI + WebSocket bridge for the web pet
+web/                Vite + React + TS frontend; cat sprites in web/public/cat-sprites
+cat/                PixelLab sprite source assets
+scripts/            migrate_to_assistant_memory.py
+tests/              pytest suite (memory, curator, retrieval, tools, permissions, skills, …)
 ```
 
-## Architecture
+Top-level entry points (from `pyproject.toml`):
 
-The agent is built in five layers:
-
-**CLI layer** (`cli/`) — REPL entry point. Resolves the current project via `AssistantMemoryManager`, collects user input, runs per-turn retrieval, drives the streaming loop, and renders output via Rich.
-
-**Core layer** (`core/`) — Stateful ReAct loop. Manages conversation history in `ConversationState`, calls the model with tool definitions, and routes tool calls back through the tool registry until the model signals it is done. `ConversationState.set_transient_system_suffix(...)` lets the memory layer inject retrieval results for one turn without persisting them.
-
-**Assistant memory layer** (`assistant_memory/`) — Markdown-native memory. Two-stage LLM retrieval on the read side, a per-turn curator daemon plus on-exit consolidation + digest on the write side. Public surface preserved as `on_startup`, `on_user_turn`, `on_assistant_turn`, `on_exit`, `find_project_for_cwd`, `onboard_for_cwd`, `onboard`, `handle_command`, `retrieve_for_query`.
-
-**Tools layer** (`tools/`) — Self-contained tool implementations.
-
-**Permissions layer** (`permissions/`) — Session-scoped delete permission tracking.
+- `agent` → `agent.cli.app:main`
+- `log-server` → `agent.log_server:main`
+- `feishu-bot` → `agent.feishu.server:main`
 
 ## Testing
 
@@ -297,7 +201,7 @@ The agent is built in five layers:
 uv run pytest -q
 ```
 
-Tests live in `tests/`. Coverage includes the assistant memory store, retrieval pipeline, curator, manager wiring, slash commands, the delete permission system, and the streaming display layer's `[memory note: ...]` filter.
+Covers store, retrieval, curator, manager, slash commands, delete permissions, tiers, signal detector, skills, compaction, the loop, the bash tool, and the display layer's `[memory note: ...]` filter.
 
 ## License
 
@@ -305,19 +209,24 @@ MIT
 
 ---
 
-<a id="cli-agent-中文"></a>
+<a id="中文"></a>
 
-# CLI Agent 中文
+# 中文
 
-> **Language / 语言**: [English](#cli-agent-english) | [中文](#cli-agent-中文)
+从零开始用 Python 写的 ReAct agent。一套核心，三种入口：
 
-一个从零开始用 Python 构建的命令行智能体，实现了 ReAct（推理 + 行动）模式。这是一个交互式编程助手，可以读取文件、编辑代码、管理目录，并安全处理危险操作——全部在终端中以流式输出的方式进行。内置 **markdown 原生的助手记忆系统**，目录结构镜像 `CLAUDE.md` 风格的人类可读笔记，每轮对话通过两阶段 LLM 选择检索相关上下文，并通过 `[memory note: ...]` 标记演化 agent 的"灵魂"。
+- **CLI** — 终端 REPL，流式 Markdown 渲染、工具调用、删除权限确认。
+- **Web** — 可拖动的橘色像素虎斑猫桌宠（`web/`），点击弹出对话气泡；后端 FastAPI + WebSocket 桥接（`server/`）。
+- **飞书机器人** — 长连接 Bot（`src/agent/feishu/`），按 `open_id` 维护独立会话。
+
+Agent 自带 **markdown 原生记忆库**：每轮两阶段检索挑选相关文件，后台 curator 从用户消息和助手回复中的 `[memory note: ...]` 标记提取事实。
 
 ## 环境要求
 
 - Python 3.11+
-- [uv](https://docs.astral.sh/uv/)（推荐）
-- OpenAI API 密钥、字节跳动 GPT API 密钥（`GPT_AK`），**或** DeepSeek API 密钥（`DEEPSEEK_API_KEY`）
+- [uv](https://docs.astral.sh/uv/)
+- 三选一：`DEEPSEEK_API_KEY` · `GPT_AK`（字节跳动）· `OPENAI_API_KEY`
+- Node 18+（仅 web 前端需要）
 
 ## 安装
 
@@ -325,132 +234,88 @@ MIT
 uv sync
 ```
 
-在项目根目录创建 `.env`，三选一即可（自动检测优先级：DeepSeek → ByteDance → OpenAI）：
+新建 `.env`：
 
 ```
-OPENAI_API_KEY=...
-GPT_AK=...
-DEEPSEEK_API_KEY=...
+DEEPSEEK_API_KEY=...        # 或 GPT_AK=... / OPENAI_API_KEY=...
 ```
 
-可选环境变量：
+自动检测优先级：**DeepSeek → ByteDance → OpenAI**。可用 `USE_DEEPSEEK=true` / `USE_BYTEDANCE=true` 强制。
 
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `USE_DEEPSEEK` | auto | `true` 强制使用 DeepSeek |
-| `USE_BYTEDANCE` | auto | `true` 强制使用 ByteDance |
-| `DEEPSEEK_MODEL_PRO` | `deepseek-v4-pro` | 主回复 + 整理判断的大模型 |
-| `DEEPSEEK_MODEL_FLASH` | `deepseek-v4-flash` | 两阶段记忆检索的小模型 |
-| `ASSISTANT_MEMORY_DIR` | `~/assistant-memory` | markdown 记忆库根目录 |
+可选环境变量见英文版表格。
 
 ## 运行
 
+### CLI
+
 ```bash
-uv run agent           # 普通运行
-uv run agent -memlog   # 显示橙色 🧠 MEMORY 面板（检索/整理/摘要事件）
+uv run agent
+uv run agent -memlog      # 实时显示橙色 MEMORY 面板（检索/整理事件）
+uv run log-server         # 独立终端的调试日志服务
 ```
 
-输入消息后按 Enter 发送。使用 `quit`、`exit` 或 Ctrl+C 退出；连按两次 Ctrl+C 强制退出（跳过 finally，中止后台 curator/digest 线程）。
+`quit` / `exit` / Ctrl+C 退出。连按两次 Ctrl+C 强制退出，立即中止后台 curator/digest 线程。
+
+### Web 桌宠
+
+两个终端：
+
+```bash
+uv run uvicorn server.main:app --reload --reload-dir server --port 8000
+cd web && npm install && npm run dev
+```
+
+打开 <http://localhost:5173>，右侧面板实时显示每次工具调用和 curator 写入。
+
+Web 模式下 turn 末尾的 `propose_writes` LLM 调用被关闭 —— 只有流中途出现的 `[memory note: ...]` marker 才会触发 curator。Marker 文本在转发到浏览器前剥离，用户看不到。
 
 ### 飞书机器人
-
-同一个 agent 核心也通过独立入口暴露为飞书 Bot：
 
 ```bash
 uv run feishu-bot
 ```
 
-桥接层位于 `src/agent/feishu/`（`server.py` + `client.py`），需要在 `.env` 中配置飞书应用凭据。
+长连接（WebSocket 出站），不需要公网 IP 或域名。
 
-## 浏览器前端（猫桌宠）
+## 工具一览
 
-除 CLI 外，同一个 agent 也通过**浏览器桌宠**暴露——一只可拖动的橘色像素虎斑猫，点击弹出对话气泡。
+| 工具 | 类别 |
+|---|---|
+| `read_file`、`list_dir` | 读 |
+| `write_file`、`str_replace`、`file_rewrite`、`make_dir` | 写 |
+| `delete_file`、`delete_dir` | 删（带权限确认） |
+| `bash` | 执行（按 tier 分级） |
+| `web_search` | 工具 |
+| `beautify`、`read_skill`、`check_permissions`、`echo` | 工具 |
 
-### 目录结构
+删除首次触碰路径会弹出确认面板：**授权本会话** / **仅这一次** / **取消**。父路径授权覆盖子路径。非 TTY 默认取消。文件写入采用临时文件 + 原子 rename；Python/JSON 文件写后做语法校验；路径限定在 cwd。
 
-- **`server/`** — FastAPI + WebSocket 桥接层，包装 `agent.core.loop.run_streaming`，推送类型化事件（`state` / `token` / `tool_call` / `tool_result` / `curator_call` / `curator_result` / `done` / `error`）。
-- **`web/`** — Vite + React + TypeScript 前端。Zustand 管状态，framer-motion 实现拖拽，猫由预生成的 PixelLab sprite 帧序列驱动（不依赖 Three.js / WebGL）。
-- **`web/public/cat-sprites/`** — 5 个动画状态 × 3 方向（south / east / west）× 6–12 帧。CC-BY 授权，PixelLab API 生成。
+## 助手记忆
 
-### 启动
+目录布局（默认 `~/assistant-memory/`）、读写流程、灵魂演化机制详见英文版。要点：
 
-需要两个终端：
+- **读侧**：两阶段检索（`flash` 模型选 scope，再选 ≤5 个文件），结果作为本轮 system 后缀注入，**不进入对话历史**。
+- **写侧**：后台 daemon 线程跑 curator（`pro` 模型），解析事实陈述与 `[memory note: ...]` marker。Layer 1 静默 append，Layer 2 待 UI（暂时跳过）。
+- **退出**：consolidate + 当日 digest 在守护线程中跑（屏幕显示 `Dreaming...`）。
+- **灵魂**：`identity/agent.md` frontmatter 的 `immutable_core` 不可变，每次启动直接拼到 system prompt；body 只能通过 marker 写。永远不要用 `str_replace` 改它。
 
-```bash
-# 后端 — 端口 8000，reload 限定到 server/ 避免对话中途重启
-uv run uvicorn server.main:app --reload --reload-dir server --port 8000
-```
-
-```bash
-# 前端 — Vite dev 5173
-cd web
-npm install   # 首次需要
-npm run dev
-```
-
-打开 <http://localhost:5173>。右侧面板会实时显示每次工具调用和 curator 写入的记忆。
-
-### 流式 Marker 门控 Curator
-
-桥接层在 token 流上拦截 `[memory note: ...]` marker：
-
-- Marker 内容**在转发给浏览器前剥离**——用户看不到。
-- 闭合 `]` 出现的瞬间，立刻起线程跑 curator（**流中途**，不是 turn 结束时），把 marker 当 hint 写入 `~/assistant-memory/`，并通过 `curator_call` / `curator_result` 事件让右侧动作面板可视化。
-- Web 模式下 turn 结束时的默认 `propose_writes` LLM 调用被关掉了（`AssistantMemoryManager.on_assistant_turn(..., run_curator=False)`）；只有 marker 触发的写入会发生，琐碎对话不再产生 curator 开销。
-
-## 助手记忆系统
-
-记忆库位于 `~/assistant-memory/`：
-
-```
-~/assistant-memory/
-├── _index.md                   # 顶层 manifest，启动时总是读取
-├── identity/
-│   ├── me.md                   # 用户身份
-│   └── agent.md                # agent 的灵魂；frontmatter 含 immutable_core
-├── people/<name>.md            # 每个人物一个文件
-├── preferences/<topic>.md      # 饮食、咖啡、阅读、礼物、旅行……
-├── life/<aspect>.md            # 长期目标、进行中的项目、人生主题
-├── threads/<topic>.md          # 开放话题 / 未解决的 TODO
-├── events/<slug>.md            # 时间锚定的事件（已过 / 未来）
-├── context/current.md          # 本周状态 —— 永远注入
-└── log/YYYY-MM/YYYY-MM-DD.md   # 每日会话摘要
-```
-
-**每轮检索（读侧）。** 模型调用之前：
-1. `_index.md` + 最近几轮对话 + 用户问题 → Stage 1 小模型挑选 scope。
-2. 选中 scope 的 manifest → Stage 2 小模型挑选最多 5 个文件。
-3. 这些文件 + `context/current.md` 作为本轮的临时 system 后缀注入，**不污染对话历史**。
-
-**整理器（写侧）。** 每轮助手回复后，后台守护线程运行 curator（大模型）：
-- 扫描用户消息中的事实陈述、助手回复中的 `[memory note: ...]` 标记。
-- Layer 1（静默）：明确的事实 → 直接 append 到对应文件。
-- Layer 2（确认）：模糊或矛盾事实。*（确认 UI 暂未接入，目前 Layer 2 静默跳过。）*
-- 增量更新对应 manifest 行。
-
-**退出时。** 触发整理 + 当日会话摘要（后台守护线程）。退出前最近一次 per-turn curator 会被 join 最多 2 秒，避免整理读到过期 manifest。
-
-**灵魂演化。** Agent 的可变"灵魂"在 `identity/agent.md` 的 body；不可变值（frontmatter `immutable_core`）每次启动都注入系统提示，不依赖检索。灵魂更新通过 `[memory note: ...]` 通道流入。
-
-**斜杠命令：**
+### 斜杠命令
 
 | 命令 | 说明 |
-|------|------|
-| `/memory list <scope>` | 列出 scope 内的文件 |
+|---|---|
+| `/memory list <scope>` | 列出 scope 文件 |
 | `/memory show <scope>/<file>` | 显示某个记忆文件 |
-| `/memory rebuild <scope>` | 重新生成 scope manifest |
+| `/memory rebuild <scope>` | 重新生成 manifest |
 | `/memory current` | 显示 `context/current.md` |
-| `/memory help` | 显示所有记忆命令 |
-| `/skills` | 列出已安装的 skill |
+| `/memory help` | 列出所有记忆命令 |
+| `/skills` | 列出已安装 skill |
 | `/<skill-name>` | 显式加载某个 skill |
 
-**从旧 JSON 存储迁移：**
+### 旧 JSON 存储迁移
 
 ```bash
 uv run python -m scripts.migrate_to_assistant_memory
 ```
-
-把 `personality.json` 转换为 `identity/agent.md`，把 projects + digests 转换为 markdown，并将旧目录重命名为 `agent-memory.legacy/`。
 
 ## 测试
 
